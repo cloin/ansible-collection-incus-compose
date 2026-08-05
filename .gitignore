@@ -1,0 +1,6 @@
+.venv/
+.ansible/
+.pytest_cache/
+*.pyc
+__pycache__/
+cloin-incus_compose-*.tar.gz

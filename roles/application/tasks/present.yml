@@ -1,0 +1,38 @@
+---
+- name: Ensure application project exists
+  damex.incus.incus_project:
+    name: "{{ _incus_app_project }}"
+    description: >-
+      {{ _incus_app.description |
+         default('Managed by cloin.incus_compose: ' ~ _incus_app_name) }}
+    config: >-
+      {{ incus_application_default_project_config |
+         combine(_incus_app.project_config | default({}), recursive=True) }}
+    state: present
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+
+- name: Ensure managed application networks exist
+  ansible.builtin.include_tasks: network.yml
+  loop: "{{ _incus_app_networks | dict2items }}"
+  loop_control:
+    loop_var: _incus_network_item
+    label: "{{ _incus_network_item.key }}"
+  when: not (_incus_network_item.value.external | default(false) | bool)
+
+- name: Ensure application volumes exist
+  ansible.builtin.include_tasks: volume.yml
+  loop: "{{ _incus_app_volumes | dict2items }}"
+  loop_control:
+    loop_var: _incus_volume_item
+    label: "{{ _incus_volume_item.key }}"
+
+- name: Ensure application services exist in dependency order
+  ansible.builtin.include_tasks: service.yml
+  loop: "{{ _incus_app_service_order }}"
+  loop_control:
+    loop_var: _incus_service_name
+    label: "{{ _incus_service_name }}"

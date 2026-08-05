@@ -1,0 +1,26 @@
+---
+- name: Validate volume for service {{ _incus_service_name }}
+  ansible.builtin.assert:
+    that:
+      - _incus_service_volume_item.key in _incus_app_volumes
+    fail_msg: >-
+      Service {{ _incus_service_name }} references undefined volume
+      {{ _incus_service_volume_item.key }}.
+
+- name: Attach volume {{ _incus_service_volume_item.key }} to {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_devices: >-
+      {{ _incus_service_devices + [{
+        'name': _incus_service_volume_item.key,
+        'type': 'disk',
+        'pool': _incus_app_volumes[_incus_service_volume_item.key].pool |
+          default(_incus_app_defaults.storage_pool |
+          default(incus_default_storage_pool)),
+        'source': _incus_app_volumes[_incus_service_volume_item.key].name |
+          default(_incus_service_volume_item.key),
+        'path': (_incus_service_volume_item.value
+          if _incus_service_volume_item.value is string
+          else _incus_service_volume_item.value.path),
+        'readonly': (false if _incus_service_volume_item.value is string
+          else _incus_service_volume_item.value.readonly | default(false))
+      }] }}

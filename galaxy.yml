@@ -1,0 +1,25 @@
+---
+namespace: cloin
+name: incus_compose
+version: 0.1.0
+readme: README.md
+authors:
+  - cloin
+description: Compose-like application and catalog reconciliation for Incus
+license:
+  - MIT
+tags:
+  - incus
+  - containers
+  - infrastructure
+repository: https://github.com/cloin/ansible-collection-incus-compose
+issues: https://github.com/cloin/ansible-collection-incus-compose/issues
+dependencies:
+  damex.incus: ">=1.11.8,<2.0.0"
+build_ignore:
+  - .ansible
+  - .ansible-lint
+  - .gitignore
+  - .pytest_cache
+  - .venv
+  - tests

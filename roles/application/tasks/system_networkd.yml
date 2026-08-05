@@ -1,0 +1,58 @@
+---
+- name: Install managed systemd-networkd configuration for {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - exec
+      - "{{ incus_remote }}:{{ _incus_service_instance_name }}"
+      - --project
+      - "{{ _incus_app_project }}"
+      - --
+      - sh
+      - -c
+      - |
+        set -eu
+        target=/etc/systemd/network/10-incus-apps.network
+        temporary=$(mktemp)
+        trap 'rm -f "$temporary"' EXIT
+        cat > "$temporary"
+        if test -f "$target" && cmp -s "$temporary" "$target"; then
+          exit 0
+        fi
+        install -o root -g root -m 0644 "$temporary" "$target"
+        echo changed
+    stdin: |
+      # Managed by cloin.incus_compose. Local changes will be replaced.
+      [Match]
+      Name=eth*
+
+      [Network]
+      DHCP=true
+
+      [DHCPv4]
+      UseDomains=true
+      UseMTU=true
+
+      [DHCP]
+      ClientIdentifier=mac
+  register: _incus_system_networkd_config
+  changed_when: "'changed' in _incus_system_networkd_config.stdout"
+
+- name: Reload and reconfigure managed network links for {{ _incus_service_instance_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - exec
+      - "{{ incus_remote }}:{{ _incus_service_instance_name }}"
+      - --project
+      - "{{ _incus_app_project }}"
+      - --
+      - sh
+      - -c
+      - >-
+        set -eu;
+        networkctl reload;
+        for path in /sys/class/net/eth*; do
+          networkctl reconfigure "${path##*/}";
+        done
+  changed_when: _incus_system_networkd_config.changed

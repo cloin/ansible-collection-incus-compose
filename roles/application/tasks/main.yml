@@ -1,0 +1,11 @@
+---
+- name: Validate and normalize the application definition
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Reconcile application resources
+  ansible.builtin.include_tasks: present.yml
+  when: _incus_app_state == 'present'
+
+- name: Remove application resources
+  ansible.builtin.include_tasks: absent.yml
+  when: _incus_app_state == 'absent'

@@ -1,0 +1,10 @@
+---
+- name: Load {{ _incus_compose_catalog_path | basename }}
+  ansible.builtin.include_vars:
+    file: "{{ _incus_compose_catalog_path }}"
+    name: _incus_compose_catalog_file
+
+- name: Add {{ _incus_compose_catalog_path | basename }} to the catalog
+  ansible.builtin.set_fact:
+    _incus_compose_catalog_loaded: >-
+      {{ _incus_compose_catalog_loaded + [_incus_compose_catalog_file] }}

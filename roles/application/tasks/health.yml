@@ -1,0 +1,26 @@
+---
+- name: Run command health check for {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv: >-
+      {{ ['incus', 'exec', incus_remote ~ ':' ~
+          (_incus_service.name | default(_incus_service_name)),
+          '--project', _incus_app_project, '--'] +
+         _incus_service.healthcheck.command }}
+  register: _incus_health_command
+  changed_when: false
+  retries: "{{ _incus_service.healthcheck.retries | default(30) }}"
+  delay: "{{ _incus_service.healthcheck.interval | default(2) }}"
+  until: _incus_health_command.rc == 0
+  when: _incus_service.healthcheck.command is defined
+
+- name: Run HTTP health check for {{ _incus_service_name }}
+  ansible.builtin.uri:
+    url: "{{ _incus_service.healthcheck.http }}"
+    status_code: "{{ _incus_service.healthcheck.status | default([200]) }}"
+    validate_certs: "{{ _incus_service.healthcheck.validate_certs | default(true) }}"
+  register: _incus_health_http
+  changed_when: false
+  retries: "{{ _incus_service.healthcheck.retries | default(30) }}"
+  delay: "{{ _incus_service.healthcheck.interval | default(2) }}"
+  until: _incus_health_http.status in (_incus_service.healthcheck.status | default([200]))
+  when: _incus_service.healthcheck.http is defined

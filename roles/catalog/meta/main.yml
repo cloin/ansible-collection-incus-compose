@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  author: cloin
+  description: Reconcile a catalog of Compose-like Incus applications
+  license: MIT
+  min_ansible_version: "2.20"

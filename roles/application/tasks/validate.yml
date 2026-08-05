@@ -1,0 +1,204 @@
+---
+- name: Validate the collection connection contract
+  ansible.builtin.assert:
+    that:
+      - incus_compose_connection is mapping
+      - incus_compose_connection.remote | default('') | length > 0
+      - incus_compose_connection.url | default('') is match('^https://')
+      - incus_compose_connection.client_cert_path | default('') | length > 0
+      - incus_compose_connection.client_key_path | default('') | length > 0
+    fail_msg: >-
+      incus_compose_connection requires remote, url, client_cert_path, and
+      client_key_path. The named Incus CLI remote must already exist.
+
+- name: Validate the public application schema
+  ansible.builtin.assert:
+    that:
+      - incus_compose_application is mapping
+      - ([incus_compose_application] | cloin.incus_compose.validate_catalog)
+
+- name: Normalize public inputs for reconciliation
+  ansible.builtin.set_fact:
+    incus_application_definition: >-
+      {{ incus_compose_application |
+         cloin.incus_compose.normalize_application }}
+    incus_application_state_override: "{{ incus_compose_state_override }}"
+    incus_application_update: "{{ incus_compose_update }}"
+    incus_application_destroy_data: "{{ incus_compose_destroy_data }}"
+    incus_application_hide_sensitive_values: >-
+      {{ incus_compose_hide_sensitive_values }}
+    incus_application_default_project_config: >-
+      {{ incus_compose_default_project_config }}
+    incus_application_default_instance_config: >-
+      {{ incus_compose_default_instance_config }}
+    incus_remote: "{{ incus_compose_connection.remote }}"
+    incus_api_url: "{{ incus_compose_connection.url }}"
+    incus_client_cert_path: >-
+      {{ incus_compose_connection.client_cert_path }}
+    incus_client_key_path: >-
+      {{ incus_compose_connection.client_key_path }}
+    incus_server_cert_path: >-
+      {{ incus_compose_connection.server_cert_path | default('') }}
+    incus_validate_certs: >-
+      {{ incus_compose_connection.validate_certs | default(true) }}
+    incus_default_storage_pool: "{{ incus_compose_default_storage_pool }}"
+
+- name: Verify the configured Incus CLI remote
+  ansible.builtin.command:
+    argv:
+      - incus
+      - info
+      - "{{ incus_remote }}:"
+  changed_when: false
+
+- name: Inspect Incus cluster state
+  damex.incus.incus_cluster_info:
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_compose_cluster_info
+
+- name: Inspect Incus cluster members
+  damex.incus.incus_cluster_member_info:
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_compose_cluster_member_info
+  when: _incus_compose_cluster_info.cluster.enabled | bool
+
+- name: Inspect Incus storage pools
+  damex.incus.incus_storage_info:
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_compose_storage_info
+
+- name: Record Incus topology
+  ansible.builtin.set_fact:
+    _incus_compose_clustered: >-
+      {{ _incus_compose_cluster_info.cluster.enabled | bool }}
+    _incus_compose_cluster_members: >-
+      {{ _incus_compose_cluster_member_info.cluster_members |
+         default([]) }}
+    _incus_compose_online_members: >-
+      {{ _incus_compose_cluster_member_info.cluster_members |
+         default([]) |
+         selectattr('status', 'equalto', 'Online') |
+         map(attribute='server_name') | list }}
+    _incus_compose_storage_drivers: >-
+      {{ _incus_compose_storage_info.storage_pools |
+         items2dict(key_name='name', value_name='driver') }}
+
+- name: Normalize application values
+  ansible.builtin.set_fact:
+    _incus_app: "{{ incus_application_definition.application }}"
+    _incus_app_name: "{{ incus_application_definition.application.name }}"
+    _incus_app_project: >-
+      {{ incus_application_definition.application.project |
+         default(incus_application_definition.application.name, true) }}
+    _incus_app_state: >-
+      {{ incus_application_state_override |
+         default(incus_application_definition.application.state |
+                 default('present'), true) }}
+    _incus_app_services: >-
+      {{ incus_application_definition.services | default({}) }}
+    _incus_app_networks: >-
+      {{ incus_application_definition.networks | default({}) }}
+    _incus_app_volumes: >-
+      {{ incus_application_definition.volumes | default({}) }}
+    _incus_app_defaults: >-
+      {{ incus_application_definition.application.defaults | default({}) }}
+
+- name: Validate application state and placement
+  ansible.builtin.assert:
+    that:
+      - _incus_app_state in ['present', 'absent']
+      - >-
+        not _incus_compose_clustered or
+        _incus_app.placement_member | default('') | length > 0
+      - >-
+        not _incus_compose_clustered or
+        _incus_app.placement_member in
+        _incus_compose_online_members
+      - >-
+        _incus_compose_clustered or
+        _incus_app.placement_member | default('') | length == 0
+      - >-
+        (_incus_app_services | cloin.incus_compose.service_order | length) ==
+        (_incus_app_services | length)
+    fail_msg: >-
+      Clustered Incus requires placement.member naming an online member;
+      standalone Incus must omit placement.member.
+
+- name: Require all cluster members for managed networks
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_compose_online_members | length ==
+        _incus_compose_cluster_members | length
+    fail_msg: >-
+      Incus requires pending managed networks to be defined on every cluster
+      member before finalization; every cluster member must be online.
+  loop: "{{ _incus_app_networks | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _incus_compose_clustered
+    - not (item.value.external | default(false) | bool)
+
+- name: Validate per-service member placement
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_incus_compose_clustered and
+         (item.value.target | default(_incus_app.placement_member)) in
+         _incus_compose_online_members) or
+        (not _incus_compose_clustered and item.value.target is not defined)
+    fail_msg: >-
+      Service {{ item.key }} must target an online cluster member and must not
+      declare placement on standalone Incus.
+  loop: "{{ _incus_app_services | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Validate explicit volume member placement
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_incus_compose_clustered and item.value.target in
+         _incus_compose_online_members) or
+        (not _incus_compose_clustered and false)
+    fail_msg: >-
+      Volume {{ item.key }} placement must name an online cluster member and
+      must be omitted on standalone Incus.
+  loop: "{{ _incus_app_volumes | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: item.value.target is defined
+
+- name: Validate per-member network configuration
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.value.member_config | default({}) | difference(
+        _incus_compose_cluster_members |
+        map(attribute='server_name') | list) | length == 0
+      - >-
+        _incus_compose_clustered or
+        item.value.member_config | default({}) | length == 0
+    fail_msg: >-
+      Network {{ item.key }} member_config may only name members of a cluster.
+  loop: "{{ _incus_app_networks | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Calculate dependency order
+  ansible.builtin.set_fact:
+    _incus_app_service_order: >-
+      {{ _incus_app_services | cloin.incus_compose.service_order }}

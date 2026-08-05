@@ -1,0 +1,81 @@
+---
+- name: Validate catalog input contract
+  ansible.builtin.assert:
+    that:
+      - >-
+        (incus_compose_catalog_directory | length > 0) !=
+        (incus_compose_catalog | length > 0)
+    fail_msg: >-
+      Set exactly one of incus_compose_catalog_directory or
+      incus_compose_catalog.
+
+- name: Initialize file-backed catalog
+  ansible.builtin.set_fact:
+    _incus_compose_catalog_loaded: []
+  when: incus_compose_catalog_directory | length > 0
+
+- name: Load application files in stable order
+  ansible.builtin.include_tasks: load_file.yml
+  loop: >-
+    {{ query('ansible.builtin.fileglob',
+             incus_compose_catalog_directory ~ '/*.yaml') | sort }}
+  loop_control:
+    loop_var: _incus_compose_catalog_path
+    label: "{{ _incus_compose_catalog_path | basename }}"
+  when: incus_compose_catalog_directory | length > 0
+
+- name: Select and order the application catalog
+  ansible.builtin.set_fact:
+    _incus_compose_catalog_definitions: >-
+      {{ (_incus_compose_catalog_loaded
+          if incus_compose_catalog_directory | length > 0
+          else incus_compose_catalog) |
+         cloin.incus_compose.catalog_order }}
+
+- name: Validate the complete application catalog
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_compose_catalog_definitions |
+        cloin.incus_compose.validate_catalog
+
+- name: Reconcile applications in dependency order
+  ansible.builtin.include_role:
+    name: cloin.incus_compose.application
+  vars:
+    incus_compose_application: "{{ _incus_compose_catalog_application }}"
+  loop: "{{ _incus_compose_catalog_definitions }}"
+  loop_control:
+    loop_var: _incus_compose_catalog_application
+    label: "{{ _incus_compose_catalog_application.name }}"
+
+- name: Query live Incus instances for routes
+  ansible.builtin.command:
+    argv:
+      - incus
+      - list
+      - "{{ incus_compose_connection.remote }}:"
+      - --all-projects
+      - --format
+      - json
+  register: _incus_compose_catalog_instances
+  changed_when: false
+  retries: "{{ incus_compose_route_retries }}"
+  delay: "{{ incus_compose_route_delay }}"
+  until: >-
+    (_incus_compose_catalog_definitions |
+     cloin.incus_compose.route_bindings(
+       _incus_compose_catalog_instances.stdout | from_json, false) | length) ==
+    (_incus_compose_catalog_definitions |
+     cloin.incus_compose.route_count)
+  when: incus_compose_resolve_routes | bool
+
+- name: Publish catalog reconciliation result
+  ansible.builtin.set_fact:
+    incus_compose_catalog_result:
+      applications: "{{ _incus_compose_catalog_definitions }}"
+      routes: >-
+        {{ _incus_compose_catalog_definitions |
+           cloin.incus_compose.route_bindings(
+             _incus_compose_catalog_instances.stdout | from_json)
+           if incus_compose_resolve_routes | bool else [] }}

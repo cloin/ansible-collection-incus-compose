@@ -1,0 +1,61 @@
+---
+- name: Calculate volume {{ _incus_volume_item.key }} placement
+  ansible.builtin.set_fact:
+    _incus_volume_pool: >-
+      {{ _incus_volume_item.value.pool |
+         default(_incus_app_defaults.storage_pool |
+         default(incus_default_storage_pool)) }}
+
+- name: Validate volume {{ _incus_volume_item.key }} storage pool
+  ansible.builtin.assert:
+    that:
+      - _incus_volume_pool in _incus_compose_storage_drivers
+      - >-
+        not _incus_compose_clustered or
+        _incus_compose_storage_drivers[_incus_volume_pool] in
+        (incus_compose_local_storage_drivers +
+         incus_compose_shared_storage_drivers)
+      - >-
+        _incus_volume_item.value.target is not defined or
+        _incus_compose_storage_drivers[_incus_volume_pool] in
+        incus_compose_local_storage_drivers
+    fail_msg: >-
+      Volume {{ _incus_volume_item.key }} uses an unavailable or unsupported
+      pool, or declares placement for shared storage.
+
+- name: Record volume {{ _incus_volume_item.key }} target
+  ansible.builtin.set_fact:
+    _incus_volume_target: >-
+      {{ _incus_volume_item.value.target |
+         default(_incus_app.placement_member) }}
+  when:
+    - _incus_compose_clustered
+    - >-
+      _incus_compose_storage_drivers[_incus_volume_pool] in
+      incus_compose_local_storage_drivers
+
+- name: Ensure volume {{ _incus_volume_item.key }} exists
+  damex.incus.incus_storage_volume:
+    name: "{{ _incus_volume_item.value.name | default(_incus_volume_item.key) }}"
+    description: >-
+      {{ _incus_volume_item.value.description |
+         default('Managed by cloin.incus_compose: ' ~ _incus_app_name ~ '/' ~ _incus_volume_item.key) }}
+    pool: "{{ _incus_volume_pool }}"
+    project: "{{ _incus_app_project }}"
+    target: >-
+      {{ _incus_volume_target
+         if (_incus_compose_clustered and
+             _incus_compose_storage_drivers[_incus_volume_pool] in
+             incus_compose_local_storage_drivers)
+         else omit }}
+    content_type: "{{ _incus_volume_item.value.content_type | default('filesystem') }}"
+    config: >-
+      {{ (_incus_volume_item.value.config | default({})) |
+         combine({'size': _incus_volume_item.value.size}
+         if _incus_volume_item.value.size is defined else {}) }}
+    state: present
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"

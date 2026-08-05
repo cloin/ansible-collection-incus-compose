@@ -1,0 +1,15 @@
+---
+- name: Validate application role syntax
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: cloin.incus_compose.application
+      incus_compose_application:
+        schema: cloin.incus-compose/v1
+        name: syntax
+        services: {}
+      incus_compose_connection:
+        remote: syntax
+        url: https://incus.example.invalid:8443
+        client_cert_path: /tmp/client.crt
+        client_key_path: /tmp/client.key

@@ -1,0 +1,53 @@
+---
+- name: Normalize network {{ _incus_network_item.key }}
+  ansible.builtin.set_fact:
+    _incus_network_definition: "{{ _incus_network_item.value }}"
+    _incus_network_name: >-
+      {{ _incus_app_name |
+         cloin.incus_compose.network_name(_incus_network_item.key, _incus_network_item.value) }}
+
+- name: Create pending network {{ _incus_network_name }} on cluster members
+  damex.incus.incus_network:
+    name: "{{ _incus_network_name }}"
+    type: "{{ _incus_network_definition.type | default('bridge') }}"
+    project: >-
+      {{ _incus_network_definition.project |
+         default(_incus_app_project
+         if (((_incus_app.project_config | default({}))['features.networks'] |
+         default(false)) | bool) else 'default') }}
+    target: "{{ item.server_name }}"
+    config: >-
+      {{ _incus_network_definition.member_config |
+         default({}) | dict2items |
+         selectattr('key', 'equalto', item.server_name) |
+         map(attribute='value') | first | default({}) }}
+    state: present
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  loop: "{{ _incus_compose_cluster_members }}"
+  loop_control:
+    label: "{{ item.server_name }}"
+  when: _incus_compose_clustered
+
+- name: Finalize network {{ _incus_network_name }}
+  damex.incus.incus_network:
+    name: "{{ _incus_network_name }}"
+    description: >-
+      {{ _incus_network_definition.description |
+         default('Managed by cloin.incus_compose: ' ~ _incus_app_name ~ '/' ~ _incus_network_item.key) }}
+    type: "{{ _incus_network_definition.type | default('bridge') }}"
+    project: >-
+      {{ _incus_network_definition.project |
+         default(_incus_app_project
+         if (((_incus_app.project_config | default({}))['features.networks'] |
+         default(false)) | bool) else 'default') }}
+    config: "{{ _incus_network_definition.config | default({}) }}"
+    state: present
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"

@@ -1,0 +1,69 @@
+---
+- name: Remove application services in reverse dependency order
+  damex.incus.incus_instance:
+    name: "{{ _incus_app_services[item].name | default(item) }}"
+    project: "{{ _incus_app_project }}"
+    state: absent
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  loop: "{{ _incus_app_service_order | reverse | list }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Remove non-retained application volumes
+  ansible.builtin.include_tasks: remove_volume.yml
+  loop: "{{ _incus_app_volumes | dict2items }}"
+  loop_control:
+    loop_var: _incus_volume_item
+    label: "{{ _incus_volume_item.key }}"
+  when: >-
+    incus_application_destroy_data | bool or
+    not (_incus_volume_item.value.retain | default(true) | bool)
+
+- name: Remove managed application networks
+  damex.incus.incus_network:
+    name: >-
+      {{ _incus_app_name | cloin.incus_compose.network_name(item.key, item.value) }}
+    project: >-
+      {{ item.value.project |
+         default(_incus_app_project
+         if (((_incus_app.project_config | default({}))['features.networks'] |
+         default(false)) | bool) else 'default') }}
+    state: absent
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  loop: "{{ _incus_app_networks | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: not (item.value.external | default(false) | bool)
+
+- name: Calculate retained application volumes
+  ansible.builtin.set_fact:
+    _incus_retained_volumes: []
+
+- name: Record retained application volumes
+  ansible.builtin.set_fact:
+    _incus_retained_volumes: "{{ _incus_retained_volumes + [item.key] }}"
+  loop: "{{ _incus_app_volumes | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - not (incus_application_destroy_data | bool)
+    - item.value.retain | default(true) | bool
+
+- name: Remove empty application project
+  damex.incus.incus_project:
+    name: "{{ _incus_app_project }}"
+    state: absent
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  when: incus_application_destroy_data | bool or _incus_retained_volumes | length == 0

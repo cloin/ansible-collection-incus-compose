@@ -1,0 +1,417 @@
+---
+- name: Normalize service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service: "{{ _incus_app_services[_incus_service_name] }}"
+    _incus_service_instance_name: >-
+      {{ _incus_app_services[_incus_service_name].name |
+         default(_incus_service_name) }}
+    _incus_service_kind: >-
+      {{ _incus_app_services[_incus_service_name].kind |
+         default('application-container') }}
+    _incus_service_devices: []
+    _incus_service_environment: []
+
+- name: Validate service {{ _incus_service_name }}
+  ansible.builtin.assert:
+    that:
+      - _incus_service.source is defined or _incus_service.image is defined
+      - _incus_service_kind in ['application-container', 'system-container', 'virtual-machine']
+      - _incus_service.networks | default([]) is iterable
+      - _incus_service.volumes | default({}) is mapping
+
+- name: Calculate service {{ _incus_service_name }} values
+  ansible.builtin.set_fact:
+    _incus_service_source: "{{ _incus_service.source | default(_incus_service.image) }}"
+    _incus_service_type: >-
+      {{ 'virtual-machine' if _incus_service_kind == 'virtual-machine' else 'container' }}
+    _incus_service_profiles: >-
+      {{ _incus_service.profiles |
+         default(_incus_app_defaults.profiles | default([])) }}
+    _incus_service_networks: >-
+      {{ _incus_service.networks |
+         default([_incus_app_defaults.network]
+         if _incus_app_defaults.network is defined else []) }}
+    _incus_service_identity: >-
+      kind={{ _incus_service_kind }};
+      source={{ _incus_service.source | default(_incus_service.image) }}
+    _incus_service_managed_env_marker: >-
+      managed_env={{ _incus_service.environment | default({}) | list | sort | join(',') }}
+
+- name: Build description for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_description: >-
+      Managed by cloin.incus_compose; application={{ _incus_app_name }};
+      service={{ _incus_service_name }}; kind={{ _incus_service_kind }};
+      source={{ _incus_service.source | default(_incus_service.image) }};
+      {{ _incus_service_managed_env_marker }}
+
+- name: Add root disk for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_devices: >-
+      {{ _incus_service_devices + [{
+        'name': 'root',
+        'type': 'disk',
+        'path': '/',
+        'pool': _incus_service.root_pool |
+          default(_incus_app_defaults.storage_pool |
+          default(incus_default_storage_pool)),
+        'size': _incus_service.root_size | default(None)
+      }] }}
+  when: _incus_service_profiles | length == 0
+
+- name: Add networks for service {{ _incus_service_name }}
+  ansible.builtin.include_tasks: service_network.yml
+  loop: "{{ _incus_service_networks }}"
+  loop_control:
+    loop_var: _incus_service_network_item
+    index_var: _incus_service_network_index
+    label: >-
+      {{ (_incus_service_network_item.name
+          if _incus_service_network_item is mapping
+          else _incus_service_network_item) }}
+
+- name: Add volumes for service {{ _incus_service_name }}
+  ansible.builtin.include_tasks: service_volume.yml
+  loop: "{{ _incus_service.volumes | default({}) | dict2items }}"
+  loop_control:
+    loop_var: _incus_service_volume_item
+    label: "{{ _incus_service_volume_item.key }}"
+
+- name: Add native devices for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_devices: >-
+      {{ _incus_service_devices + (_incus_service.devices | default([])) }}
+
+- name: Add raw TCP and UDP exposures for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_devices: >-
+      {{ _incus_service_devices +
+         [_incus_service_exposure | cloin.incus_compose.port_device] }}
+  loop: >-
+    {{ ([_incus_service.get('expose')]
+        if _incus_service.get('expose') is mapping
+        else _incus_service.get('expose', [])) }}
+  loop_control:
+    loop_var: _incus_service_exposure
+    label: "{{ _incus_service_exposure.name }}"
+
+- name: Add environment for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_environment: >-
+      {{ _incus_service_environment + [{
+        'name': _incus_environment_item.key,
+        'value': _incus_environment_item.value | string
+      }] }}
+  loop: "{{ _incus_service.environment | default({}) | dict2items }}"
+  loop_control:
+    loop_var: _incus_environment_item
+    label: "{{ _incus_environment_item.key }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+
+- name: Build native configuration overlay for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_native_config: >-
+      {{ incus_application_default_instance_config |
+         combine(_incus_app_defaults.config | default({}), recursive=True) |
+         combine(_incus_service.config | default({}), recursive=True) }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+
+- name: Inspect service {{ _incus_service_name }}
+  damex.incus.incus_instance_info:
+    name: "{{ _incus_service.name | default(_incus_service_name) }}"
+    project: "{{ _incus_app_project }}"
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_service_existing
+
+- name: Decide whether service {{ _incus_service_name }} must be recreated
+  ansible.builtin.set_fact:
+    _incus_service_source_changed: >-
+      {{ (_incus_service_existing.instances | length > 0) and
+         (_incus_service_identity not in
+         (_incus_service_existing.instances[0].description | default(''))) }}
+    _incus_service_oci_needs_recreate: >-
+      {{ (_incus_service_kind == 'application-container') and
+         (_incus_service_existing.instances | length > 0) and
+         (('oci.entrypoint' not in
+         (_incus_service_existing.instances[0].config | default({}))) or
+         (not (_incus_service_existing.instances[0].description | default('')).endswith(
+         _incus_service_managed_env_marker))) }}
+    _incus_service_force_recreate: >-
+      {{ (_incus_service_existing.instances | length > 0) and
+         (incus_application_update | bool) and
+         ((_incus_service.update.strategy |
+         default('recreate' if _incus_service_kind == 'application-container' else 'packages')) == 'recreate') }}
+
+- name: Protect stateful system instances from implicit replacement
+  ansible.builtin.assert:
+    that:
+      - not _incus_service_source_changed or (_incus_service.recreate_on_source_change | default(false) | bool)
+    fail_msg: >-
+      Service {{ _incus_service_name }} changed source or kind. Set
+      recreate_on_source_change: true to authorize replacement of this
+      {{ _incus_service_kind }}.
+  when:
+    - _incus_service_kind != 'application-container'
+    - _incus_service_existing.instances | length > 0
+
+- name: Stop service {{ _incus_service_name }} before recreation
+  ansible.builtin.command:
+    argv:
+      - incus
+      - stop
+      - "{{ incus_remote }}:{{ _incus_service.name | default(_incus_service_name) }}"
+      - --project
+      - "{{ _incus_app_project }}"
+      - --force
+  changed_when: true
+  when:
+    - >-
+      _incus_service_source_changed or
+      _incus_service_oci_needs_recreate or
+      _incus_service_force_recreate
+    - _incus_service_kind == 'application-container' or (_incus_service.recreate_on_source_change | default(false) | bool)
+    - _incus_service_existing.instances[0].status == 'Running'
+
+- name: Remove disposable service {{ _incus_service_name }} before recreation
+  damex.incus.incus_instance:
+    name: "{{ _incus_service.name | default(_incus_service_name) }}"
+    project: "{{ _incus_app_project }}"
+    state: absent
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  when:
+    - >-
+      _incus_service_source_changed or
+      _incus_service_oci_needs_recreate or
+      _incus_service_force_recreate
+    - _incus_service_kind == 'application-container' or (_incus_service.recreate_on_source_change | default(false) | bool)
+
+- name: Seed OCI image defaults for service {{ _incus_service_name }}
+  damex.incus.incus_instance:
+    name: "{{ _incus_service.name | default(_incus_service_name) }}"
+    description: "{{ _incus_service_description }}"
+    project: "{{ _incus_app_project }}"
+    type: container
+    source: "{{ _incus_service_source }}"
+    source_server: "{{ _incus_service.source_server | default(omit) }}"
+    source_protocol: "{{ _incus_service.source_protocol | default(omit) }}"
+    profiles: "{{ _incus_service_profiles }}"
+    target: "{{ _incus_service.target | default(omit) }}"
+    ephemeral: "{{ _incus_service.ephemeral | default(false) }}"
+    config: {}
+    devices: "{{ _incus_service_devices }}"
+    state: stopped
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  when:
+    - _incus_service_kind == 'application-container'
+    - >-
+      (_incus_service_existing.instances | length == 0) or
+      _incus_service_source_changed or
+      _incus_service_oci_needs_recreate or
+      _incus_service_force_recreate
+
+- name: Inspect seeded OCI defaults for service {{ _incus_service_name }}
+  damex.incus.incus_instance_info:
+    name: "{{ _incus_service.name | default(_incus_service_name) }}"
+    project: "{{ _incus_app_project }}"
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_service_oci_instance
+  when: _incus_service_kind == 'application-container'
+
+- name: Build OCI API configuration for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_oci_config: >-
+      {{ _incus_service_oci_instance.instances[0].config |
+         cloin.incus_compose.oci_raw_config(
+         _incus_service.environment | default({}),
+         _incus_service_native_config) }}
+    _incus_service_oci_devices: >-
+      {{ _incus_service_devices | cloin.incus_compose.devices_config }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+  when: _incus_service_kind == 'application-container'
+
+- name: Build OCI edit payload for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_oci_edit_payload:
+      architecture: "{{ _incus_service_oci_instance.instances[0].architecture }}"
+      config: "{{ _incus_service_oci_config }}"
+      description: "{{ _incus_service_description }}"
+      devices: "{{ _incus_service_oci_devices }}"
+      ephemeral: "{{ _incus_service.ephemeral | default(false) | bool }}"
+      profiles: "{{ _incus_service_profiles }}"
+      stateful: "{{ _incus_service_oci_instance.instances[0].stateful | default(false) | bool }}"
+    _incus_service_oci_requires_edit: >-
+      {{ (_incus_service_oci_instance.instances[0].config != _incus_service_oci_config) or
+         ((_incus_service_oci_instance.instances[0].description | default('')) !=
+         _incus_service_description) or
+         ((_incus_service_oci_instance.instances[0].devices | default({})) !=
+         _incus_service_oci_devices) or
+         ((_incus_service_oci_instance.instances[0].profiles | default([])) !=
+         _incus_service_profiles) or
+         ((_incus_service_oci_instance.instances[0].ephemeral | default(false) | bool) !=
+         (_incus_service.ephemeral | default(false) | bool)) }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+  when: _incus_service_kind == 'application-container'
+
+- name: Apply OCI configuration for service {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - config
+      - edit
+      - "{{ incus_remote }}:{{ _incus_service.name | default(_incus_service_name) }}"
+      - --project
+      - "{{ _incus_app_project }}"
+    stdin: "{{ _incus_service_oci_edit_payload | to_nice_yaml }}"
+  register: _incus_service_oci_edit
+  changed_when: true
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+  when:
+    - _incus_service_kind == 'application-container'
+    - _incus_service_oci_requires_edit
+
+- name: Restart changed OCI service {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - restart
+      - "{{ incus_remote }}:{{ _incus_service.name | default(_incus_service_name) }}"
+      - --project
+      - "{{ _incus_app_project }}"
+      - --force
+  changed_when: true
+  when:
+    - _incus_service_kind == 'application-container'
+    - _incus_service_oci_edit.changed | default(false)
+    - _incus_service_oci_instance.instances[0].status == 'Running'
+    - _incus_service.state | default('started') == 'started'
+
+- name: Start OCI service {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - start
+      - "{{ incus_remote }}:{{ _incus_service.name | default(_incus_service_name) }}"
+      - --project
+      - "{{ _incus_app_project }}"
+  changed_when: true
+  when:
+    - _incus_service_kind == 'application-container'
+    - _incus_service_oci_instance.instances[0].status != 'Running'
+    - _incus_service.state | default('started') == 'started'
+
+- name: Stop OCI service {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - stop
+      - "{{ incus_remote }}:{{ _incus_service.name | default(_incus_service_name) }}"
+      - --project
+      - "{{ _incus_app_project }}"
+      - --force
+  changed_when: true
+  when:
+    - _incus_service_kind == 'application-container'
+    - _incus_service_oci_instance.instances[0].status == 'Running'
+    - _incus_service.state | default('started') == 'stopped'
+
+- name: Build system instance configuration for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_config: >-
+      {{ _incus_service_native_config |
+         combine({'environment_variables': _incus_service_environment}
+         if _incus_service_environment | length > 0 else {}, recursive=True) }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+  when: _incus_service_kind != 'application-container'
+
+- name: Ensure system service {{ _incus_service_name }} is running
+  damex.incus.incus_instance:
+    name: "{{ _incus_service.name | default(_incus_service_name) }}"
+    description: "{{ _incus_service_description }}"
+    project: "{{ _incus_app_project }}"
+    type: "{{ _incus_service_type }}"
+    source: "{{ _incus_service_source }}"
+    source_server: "{{ _incus_service.source_server | default(omit) }}"
+    source_protocol: "{{ _incus_service.source_protocol | default(omit) }}"
+    profiles: "{{ _incus_service_profiles }}"
+    target: "{{ _incus_service.target | default(omit) }}"
+    ephemeral: "{{ _incus_service.ephemeral | default(false) }}"
+    config: "{{ _incus_service_config }}"
+    devices: "{{ _incus_service_devices }}"
+    state: "{{ _incus_service.state | default('started') }}"
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_service_result
+  no_log: "{{ incus_application_hide_sensitive_values and (_incus_service_environment | length > 0) }}"
+  when: _incus_service_kind != 'application-container'
+
+- name: Restart changed existing service {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - restart
+      - "{{ incus_remote }}:{{ _incus_service.name | default(_incus_service_name) }}"
+      - --project
+      - "{{ _incus_app_project }}"
+      - --force
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - _incus_service_kind != 'application-container'
+    - _incus_service_result.changed
+    - _incus_service_existing.instances | length > 0
+    - not _incus_service_source_changed
+    - not _incus_service_oci_needs_recreate
+    - not _incus_service_force_recreate
+
+- name: Configure systemd-networkd for service {{ _incus_service_name }}
+  ansible.builtin.include_tasks: system_networkd.yml
+  when:
+    - not ansible_check_mode
+    - _incus_service_kind == 'system-container'
+    - _incus_service.network_manager | default('') == 'systemd-networkd'
+
+- name: Update packages inside service {{ _incus_service_name }}
+  ansible.builtin.command:
+    argv: >-
+      {{ ['incus', 'exec', incus_remote ~ ':' ~
+          (_incus_service.name | default(_incus_service_name)),
+          '--project', _incus_app_project, '--'] +
+         (_incus_service.update.command |
+          default(['sh', '-lc',
+          'export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get -y dist-upgrade'])) }}
+  register: _incus_service_package_update
+  changed_when: >-
+    '0 upgraded, 0 newly installed' not in
+    ((_incus_service_package_update.stdout | default('')) ~
+     (_incus_service_package_update.stderr | default('')))
+  when:
+    - not ansible_check_mode
+    - incus_application_update | bool
+    - _incus_service_kind != 'application-container'
+    - (_incus_service.update.strategy | default('packages')) == 'packages'
+
+- name: Check service {{ _incus_service_name }} health
+  ansible.builtin.include_tasks: health.yml
+  when:
+    - not ansible_check_mode
+    - _incus_service.state | default('started') == 'started'
+    - _incus_service.healthcheck is defined

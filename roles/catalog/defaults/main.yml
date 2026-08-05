@@ -1,0 +1,12 @@
+---
+incus_compose_catalog: []
+incus_compose_catalog_directory: ""
+incus_compose_connection: {}
+incus_compose_default_storage_pool: default
+incus_compose_state_override: ""
+incus_compose_update: false
+incus_compose_destroy_data: false
+incus_compose_hide_sensitive_values: true
+incus_compose_resolve_routes: true
+incus_compose_route_retries: 20
+incus_compose_route_delay: 2

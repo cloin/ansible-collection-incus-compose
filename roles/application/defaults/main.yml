@@ -1,0 +1,32 @@
+---
+incus_compose_application: {}
+incus_compose_connection: {}
+incus_compose_default_storage_pool: default
+incus_compose_state_override: ""
+incus_compose_update: false
+incus_compose_destroy_data: false
+incus_compose_hide_sensitive_values: true
+
+incus_compose_local_storage_drivers:
+  - btrfs
+  - dir
+  - lvm
+  - zfs
+incus_compose_shared_storage_drivers:
+  - ceph
+  - cephfs
+  - cephobject
+  - linstor
+  - lvmcluster
+
+incus_compose_default_project_config:
+  features.images: false
+  features.networks: false
+  features.networks.zones: true
+  features.profiles: false
+  features.storage.volumes: true
+  features.storage.buckets: false
+
+incus_compose_default_instance_config:
+  boot.autostart: true
+  boot.autorestart: true

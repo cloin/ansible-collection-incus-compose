@@ -1,0 +1,9 @@
+---
+profile: production
+skip_list:
+  # Both public roles deliberately share the incus_compose_* contract.
+  - var-naming[no-role-prefix]
+  # Loop labels make the resource name materially easier to follow.
+  - name[template]
+  # ansible-lint has not yet added ansible-core 2.20 to its allowlist.
+  - meta-runtime[unsupported-version]

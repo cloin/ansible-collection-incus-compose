@@ -1,0 +1,29 @@
+---
+- name: Normalize network for service {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_network_attachment: >-
+      {{ _incus_service_network_item | cloin.incus_compose.network_attachment }}
+
+- name: Validate network for service {{ _incus_service_name }}
+  ansible.builtin.assert:
+    that:
+      - _incus_service_network_attachment.name in _incus_app_networks
+    fail_msg: >-
+      Service {{ _incus_service_name }} references undefined network
+      {{ _incus_service_network_attachment.name }}.
+
+- name: Attach network {{ _incus_service_network_attachment.name }} to {{ _incus_service_name }}
+  ansible.builtin.set_fact:
+    _incus_service_devices: >-
+      {{ _incus_service_devices + [{
+        'name': 'eth' ~ _incus_service_network_index,
+        'type': 'nic',
+        'network': _incus_app_name |
+          cloin.incus_compose.network_name(_incus_service_network_attachment.name,
+          _incus_app_networks[_incus_service_network_attachment.name])
+      } | combine(
+        {'ipv4.address': _incus_service_network_attachment.ipv4_address}
+        if _incus_service_network_attachment.ipv4_address is defined else {}) |
+        combine(
+        {'ipv6.address': _incus_service_network_attachment.ipv6_address}
+        if _incus_service_network_attachment.ipv6_address is defined else {})] }}
