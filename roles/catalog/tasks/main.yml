@@ -29,8 +29,9 @@
     _incus_compose_catalog_definitions: >-
       {{ (_incus_compose_catalog_loaded
           if incus_compose_catalog_directory | length > 0
-          else incus_compose_catalog) |
+         else incus_compose_catalog) |
          cloin.incus_compose.catalog_order }}
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
 
 - name: Validate the complete application catalog
   ansible.builtin.assert:
@@ -38,6 +39,7 @@
       - >-
         _incus_compose_catalog_definitions |
         cloin.incus_compose.validate_catalog
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
 
 - name: Reconcile applications in dependency order
   ansible.builtin.include_role:
@@ -48,6 +50,7 @@
   loop_control:
     loop_var: _incus_compose_catalog_application
     label: "{{ _incus_compose_catalog_application.name }}"
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
 
 - name: Query live Incus instances for routes
   ansible.builtin.command:
@@ -60,6 +63,7 @@
       - json
   register: _incus_compose_catalog_instances
   changed_when: false
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
   retries: "{{ incus_compose_route_retries }}"
   delay: "{{ incus_compose_route_delay }}"
   until: >-
@@ -79,3 +83,4 @@
            cloin.incus_compose.route_bindings(
              _incus_compose_catalog_instances.stdout | from_json)
            if incus_compose_resolve_routes | bool else [] }}
+  no_log: "{{ incus_compose_hide_sensitive_values }}"

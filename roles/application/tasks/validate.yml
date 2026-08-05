@@ -16,6 +16,7 @@
     that:
       - incus_compose_application is mapping
       - ([incus_compose_application] | cloin.incus_compose.validate_catalog)
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
 
 - name: Normalize public inputs for reconciliation
   ansible.builtin.set_fact:
@@ -42,6 +43,7 @@
     incus_validate_certs: >-
       {{ incus_compose_connection.validate_certs | default(true) }}
     incus_default_storage_pool: "{{ incus_compose_default_storage_pool }}"
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
 
 - name: Verify the configured Incus CLI remote
   ansible.builtin.command:
@@ -114,6 +116,7 @@
       {{ incus_application_definition.volumes | default({}) }}
     _incus_app_defaults: >-
       {{ incus_application_definition.application.defaults | default({}) }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Validate application state and placement
   ansible.builtin.assert:
@@ -135,6 +138,7 @@
     fail_msg: >-
       Clustered Incus requires placement.member naming an online member;
       standalone Incus must omit placement.member.
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Require all cluster members for managed networks
   ansible.builtin.assert:
@@ -166,6 +170,7 @@
   loop: "{{ _incus_app_services | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Validate explicit volume member placement
   ansible.builtin.assert:
@@ -202,3 +207,4 @@
   ansible.builtin.set_fact:
     _incus_app_service_order: >-
       {{ _incus_app_services | cloin.incus_compose.service_order }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"

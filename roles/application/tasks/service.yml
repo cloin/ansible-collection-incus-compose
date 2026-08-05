@@ -10,6 +10,7 @@
          default('application-container') }}
     _incus_service_devices: []
     _incus_service_environment: []
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Validate service {{ _incus_service_name }}
   ansible.builtin.assert:
@@ -18,6 +19,7 @@
       - _incus_service_kind in ['application-container', 'system-container', 'virtual-machine']
       - _incus_service.networks | default([]) is iterable
       - _incus_service.volumes | default({}) is mapping
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Calculate service {{ _incus_service_name }} values
   ansible.builtin.set_fact:
@@ -36,6 +38,7 @@
       source={{ _incus_service.source | default(_incus_service.image) }}
     _incus_service_managed_env_marker: >-
       managed_env={{ _incus_service.environment | default({}) | list | sort | join(',') }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Build description for service {{ _incus_service_name }}
   ansible.builtin.set_fact:
@@ -126,6 +129,7 @@
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
   register: _incus_service_existing
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Decide whether service {{ _incus_service_name }} must be recreated
   ansible.builtin.set_fact:
@@ -145,6 +149,7 @@
          (incus_application_update | bool) and
          ((_incus_service.update.strategy |
          default('recreate' if _incus_service_kind == 'application-container' else 'packages')) == 'recreate') }}
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Protect stateful system instances from implicit replacement
   ansible.builtin.assert:
@@ -213,6 +218,7 @@
     client_key_path: "{{ incus_client_key_path }}"
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"
   when:
     - _incus_service_kind == 'application-container'
     - >-
@@ -231,6 +237,7 @@
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
   register: _incus_service_oci_instance
+  no_log: "{{ incus_application_hide_sensitive_values }}"
   when: _incus_service_kind == 'application-container'
 
 - name: Build OCI API configuration for service {{ _incus_service_name }}
@@ -360,7 +367,7 @@
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
   register: _incus_service_result
-  no_log: "{{ incus_application_hide_sensitive_values and (_incus_service_environment | length > 0) }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"
   when: _incus_service_kind != 'application-container'
 
 - name: Restart changed existing service {{ _incus_service_name }}

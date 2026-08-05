@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Prevent rendered application secrets from appearing in Ansible task output
+  while catalogs and services are loaded, normalized, validated, inspected, and
+  published.
+
 ## 0.1.0
 
 - Add strict `cloin.incus-compose/v1` application manifests.
