@@ -18,7 +18,7 @@ Pin an exact Git tag in your project's `requirements.yml`:
 collections:
   - name: https://github.com/cloin/ansible-collection-incus-compose.git
     type: git
-    version: v0.1.0
+    version: v0.1.1
 ```
 
 Then install it and its `damex.incus` dependency:
