@@ -1,0 +1,26 @@
+---
+- name: Read ownership marker for volume {{ _incus_owner_volume.name }}
+  ansible.builtin.command:
+    argv: >-
+      {{ ['incus', 'storage', 'volume', 'get',
+          incus_remote ~ ':' ~ _incus_owner_volume.pool,
+          _incus_owner_volume.name,
+          'user.cloin.incus_compose.owner',
+          '--project', _incus_compose_ownership_snapshot.project] +
+         (['--target', _incus_owner_volume.target]
+          if _incus_owner_volume.target else []) }}
+  register: _incus_owner_marker
+  changed_when: false
+
+- name: Mark volume {{ _incus_owner_volume.name }} as collection-owned
+  ansible.builtin.command:
+    argv: >-
+      {{ ['incus', 'storage', 'volume', 'set',
+          incus_remote ~ ':' ~ _incus_owner_volume.pool,
+          _incus_owner_volume.name,
+          'user.cloin.incus_compose.owner=' ~ _incus_compose_ownership.record.token,
+          '--project', _incus_compose_ownership_snapshot.project] +
+         (['--target', _incus_owner_volume.target]
+          if _incus_owner_volume.target else []) }}
+  changed_when: true
+  when: _incus_owner_marker.stdout != _incus_compose_ownership.record.token

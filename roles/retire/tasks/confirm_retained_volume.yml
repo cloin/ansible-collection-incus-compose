@@ -1,0 +1,20 @@
+---
+- name: Inspect retained volume {{ _incus_retire_volume.name }}
+  cloin.incus_compose.targeted_volume_info:
+    name: "{{ _incus_retire_volume.name }}"
+    pool: "{{ _incus_retire_volume.pool }}"
+    project: "{{ incus_compose_retire_record.project }}"
+    target: "{{ _incus_retire_volume.target or omit }}"
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  register: _incus_retire_retained_volume_info
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Record existing retained volume {{ _incus_retire_volume.name }}
+  ansible.builtin.set_fact:
+    _incus_retire_retained_volumes: >-
+      {{ _incus_retire_retained_volumes + [_incus_retire_volume.name] }}
+  when: _incus_retire_retained_volume_info.storage_volumes | length > 0

@@ -138,3 +138,9 @@ addresses on the same physical network and addresses outside a managed subnet.
 to `retain: true`; they and the project remain until
 `incus_compose_destroy_data: true` is deliberately supplied. External networks
 are never removed by their consumers.
+
+Services are stopped gracefully in reverse dependency order before deletion.
+`incus_compose_stop_timeout` bounds the stop attempt. Automatic catalog pruning
+has a separate data policy: it preserves every custom volume by default,
+regardless of the manifest's `retain` field. See the README for enrollment,
+prune guards, targeted retirement, and result fields.

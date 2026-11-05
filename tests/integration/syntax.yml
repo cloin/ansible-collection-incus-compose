@@ -13,3 +13,25 @@
         url: https://incus.example.invalid:8443
         client_cert_path: /tmp/client.crt
         client_key_path: /tmp/client.key
+
+- name: Validate catalog and retirement role syntax
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: cloin.incus_compose.catalog
+      incus_compose_connection:
+        remote: syntax
+        url: https://incus.example.invalid:8443
+        client_cert_path: /tmp/client.crt
+        client_key_path: /tmp/client.key
+      incus_compose_catalog:
+        - schema: cloin.incus-compose/v1
+          name: syntax
+          services: {}
+    - role: cloin.incus_compose.retire
+      incus_compose_connection:
+        remote: syntax
+        url: https://incus.example.invalid:8443
+        client_cert_path: /tmp/client.crt
+        client_key_path: /tmp/client.key
+      incus_compose_retire_name: syntax

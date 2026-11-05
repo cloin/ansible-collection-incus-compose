@@ -41,6 +41,40 @@
         cloin.incus_compose.validate_catalog
   no_log: "{{ incus_compose_hide_sensitive_values }}"
 
+- name: Require authoritative nonempty catalog before pruning
+  ansible.builtin.assert:
+    that:
+      - incus_compose_catalog_complete | bool
+      - _incus_compose_catalog_definitions | length > 0
+    fail_msg: >-
+      Prune requires an authoritative complete catalog with at least one
+      application. Set incus_compose_catalog_complete only after input loading
+      has succeeded.
+  when: incus_compose_prune | bool
+
+- name: Read collection-owned application inventory
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_compose_connection.remote }}"
+    action: read
+  register: _incus_compose_catalog_inventory
+  when: incus_compose_prune | bool
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Plan safe retirement of deleted applications
+  ansible.builtin.set_fact:
+    _incus_compose_prune_plan: >-
+      {{ _incus_compose_catalog_definitions |
+         cloin.incus_compose.prune_plan(
+           _incus_compose_catalog_inventory.records) }}
+  when: incus_compose_prune | bool
+
+- name: Initialize catalog retirement report
+  ansible.builtin.set_fact:
+    _incus_compose_retired: []
+    _incus_compose_retained_volumes: []
+    _incus_compose_retained_projects: []
+
 - name: Reconcile applications in dependency order
   ansible.builtin.include_role:
     name: cloin.incus_compose.application
@@ -51,6 +85,14 @@
     loop_var: _incus_compose_catalog_application
     label: "{{ _incus_compose_catalog_application.name }}"
   no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Retire applications absent from the catalog
+  ansible.builtin.include_tasks: prune_one.yml
+  loop: "{{ _incus_compose_prune_plan | default([]) }}"
+  loop_control:
+    loop_var: _incus_compose_prune_record
+    label: "{{ _incus_compose_prune_record.name }}"
+  when: incus_compose_prune | bool
 
 - name: Query live Incus instances for routes
   ansible.builtin.command:
@@ -78,6 +120,9 @@
   ansible.builtin.set_fact:
     incus_compose_catalog_result:
       applications: "{{ _incus_compose_catalog_definitions }}"
+      retired: "{{ _incus_compose_retired }}"
+      retained_volumes: "{{ _incus_compose_retained_volumes }}"
+      retained_projects: "{{ _incus_compose_retained_projects }}"
       routes: >-
         {{ _incus_compose_catalog_definitions |
            cloin.incus_compose.route_bindings(

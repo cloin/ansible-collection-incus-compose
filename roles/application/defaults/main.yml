@@ -5,6 +5,9 @@ incus_compose_default_storage_pool: default
 incus_compose_state_override: ""
 incus_compose_update: false
 incus_compose_destroy_data: false
+incus_compose_stop_timeout: 30
+incus_compose_ownership_path: ~/.local/state/cloin-incus-compose/ownership.json
+incus_compose_enroll_existing: false
 incus_compose_hide_sensitive_values: true
 
 incus_compose_local_storage_drivers:

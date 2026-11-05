@@ -368,7 +368,18 @@
     validate_certs: "{{ incus_validate_certs }}"
   register: _incus_service_result
   no_log: "{{ incus_application_hide_sensitive_values }}"
-  when: _incus_service_kind != 'application-container'
+  when:
+    - _incus_service_kind != 'application-container'
+    - >-
+      _incus_service_existing.instances | length == 0 or
+      _incus_service_source_changed or
+      _incus_service_oci_needs_recreate or
+      _incus_service_force_recreate or
+      not (_incus_service_existing.instances[0] |
+           cloin.incus_compose.system_instance_matches(
+             _incus_service_description, _incus_service_config,
+             _incus_service_devices, _incus_service_profiles,
+             _incus_service.state | default('started')))
 
 - name: Restart changed existing service {{ _incus_service_name }}
   ansible.builtin.command:

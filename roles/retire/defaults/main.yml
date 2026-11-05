@@ -1,0 +1,10 @@
+---
+incus_compose_connection: {}
+incus_compose_ownership_path: ~/.local/state/cloin-incus-compose/ownership.json
+incus_compose_stop_timeout: 30
+incus_compose_destroy_data: false
+incus_compose_hide_sensitive_values: true
+incus_compose_retire_record: {}
+incus_compose_retire_name: ""
+incus_compose_retire_verify: true
+incus_compose_retire_automatic: true
