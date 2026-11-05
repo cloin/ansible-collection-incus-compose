@@ -187,7 +187,7 @@ else:
                 "client_cert_path": "/tmp/fixture.crt",
                 "client_key_path": "/tmp/fixture.key",
             },
-            "incus_compose_ownership_path": str(inventory),
+            "incus_compose_ownership_path": "{{ lookup('env', 'FAKE_OWNERSHIP_PATH') }}",
             "incus_compose_enroll_existing": "{{ lookup('env', 'FAKE_ENROLL') | bool }}",
             "incus_compose_application": {
                 "schema": "cloin.incus-compose/v1", "name": "app",
@@ -202,6 +202,7 @@ else:
     environment = dict(os.environ)
     environment["ANSIBLE_COLLECTIONS_PATH"] = str(tmp_path / "collections")
     environment["FAKE_INCUS_STATE"] = str(state)
+    environment["FAKE_OWNERSHIP_PATH"] = str(inventory)
     environment["PATH"] = str(bin_dir) + os.pathsep + environment["PATH"]
 
     def apply(enroll):
@@ -238,3 +239,18 @@ else:
     assert "changed=0" in second.stdout
     assert json.loads(state.read_text()) == current
     assert json.loads(inventory.read_text())["records"] == records
+
+    # A new execution host cannot infer the opaque token from its empty inventory.
+    controller_inventory = tmp_path / "controller-ownership.json"
+    environment["FAKE_OWNERSHIP_PATH"] = str(controller_inventory)
+    missing_handoff = apply(False)
+    assert missing_handoff.returncode != 0
+    assert not controller_inventory.exists()
+    assert json.loads(state.read_text()) == current
+
+    shutil.copy2(inventory, controller_inventory)
+    handoff = apply(False)
+    assert handoff.returncode == 0, handoff.stdout + handoff.stderr
+    assert "changed=0" in handoff.stdout
+    assert json.loads(state.read_text()) == current
+    assert json.loads(controller_inventory.read_text())["records"] == records

@@ -88,6 +88,13 @@ cannot be an application project. Back up the inventory with the execution
 host; if it is lost, restore it before pruning because live markers alone do
 not reconstruct resource placement.
 
+When bootstrapping from one execution host and handing reconciliation to
+another, copy the completed inventory to the new host before its first apply.
+The destination path must match `incus_compose_ownership_path` for that host.
+Preserve an existing destination inventory on reruns and verify the matching
+ownership tokens for applications present on both hosts. Live Incus markers
+alone do not authorize automatic enrollment on a new host.
+
 Before enabling pruning on an existing deployment, run the application or
 catalog role once with all current definitions and
 `incus_compose_enroll_existing: true` to enroll those resources, then
