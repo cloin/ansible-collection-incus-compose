@@ -25,7 +25,7 @@ def manifest(name: str = "web") -> dict:
         "placement": {"member": "node1"},
         "services": {
             "db": {"type": "container", "image": "images:debian/13",
-                   "environment": {"PASSWORD": "do-not-store"}},
+                   "environment": {"EXAMPLE_SETTING": "fixture-marker"}},
             "api": {"type": "oci", "image": "docker:example/api",
                     "depends_on": ["db"]},
         },
@@ -54,7 +54,7 @@ def test_snapshot_contains_removal_identifiers_without_secrets():
         {"name": "data", "pool": "local", "target": "node1", "retain": False},
         {"name": "archive", "pool": "ceph", "target": "", "retain": True},
     ]
-    assert "do-not-store" not in json.dumps(result)
+    assert "fixture-marker" not in json.dumps(result)
     assert "environment" not in json.dumps(result)
     validate_snapshot(result)
 
@@ -128,7 +128,7 @@ def test_inventory_rejects_ambiguous_ownership_and_extra_data():
         update_inventory(data, remote="lab", action="retire", name="web",
                          token="wrong")
     polluted = copy.deepcopy(snapshot())
-    polluted["services"][0]["environment"] = {"PASSWORD": "secret"}
+    polluted["services"][0]["environment"] = {"EXAMPLE_SETTING": "fixture-marker"}
     with pytest.raises(ValueError, match="unsupported fields"):
         validate_snapshot(polluted)
     assert record["token"] != "wrong"
