@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 
 from ansible.errors import AnsibleFilterError
+from ansible.module_utils.parsing.convert_bool import boolean
 
 VALID_KINDS = {
     "application-container",
@@ -947,7 +948,7 @@ def incus_compose_normalize_application(definition: Mapping) -> dict:
             "sriov",
         }:
             raise AnsibleFilterError(f"{label}.type is unsupported")
-        if network.get("external", False) and any(
+        if boolean(network.get("external", False), strict=False) and any(
             key in network
             for key in ("type", "project", "description", "config", "member_config")
         ):
@@ -959,6 +960,10 @@ def incus_compose_normalize_application(definition: Mapping) -> dict:
             for key, item in network.items()
             if not str(key).startswith("x-")
         }
+        if "external" in network:
+            normalized_networks[str(logical_name)]["external"] = boolean(
+                network["external"], strict=False
+            )
 
     volumes = _mapping(
         manifest.get("volumes"), f"application '{name}'.volumes"
@@ -996,6 +1001,8 @@ def incus_compose_normalize_application(definition: Mapping) -> dict:
         }
         if target:
             normalized_volume["target"] = target
+        if "retain" in volume:
+            normalized_volume["retain"] = boolean(volume["retain"], strict=False)
         normalized_volumes[str(logical_name)] = normalized_volume
 
     application = {
@@ -1007,6 +1014,15 @@ def incus_compose_normalize_application(definition: Mapping) -> dict:
         "defaults": defaults,
         "placement_member": application_member or "",
     }
+    reserved_owner_key = "user.cloin.incus_compose.owner"
+    configs = [project_config, _mapping(defaults.get("config"), "defaults.config")]
+    configs.extend(service.get("config") or {} for service in normalized_services.values())
+    configs.extend(network.get("config") or {} for network in normalized_networks.values())
+    configs.extend(volume.get("config") or {} for volume in normalized_volumes.values())
+    if any(reserved_owner_key in config for config in configs):
+        raise AnsibleFilterError(
+            f"application '{name}' cannot set reserved config key {reserved_owner_key}"
+        )
     return {
         "application": application,
         "services": normalized_services,
@@ -1153,6 +1169,128 @@ def incus_compose_route_bindings(
     )
 
 
+def incus_compose_ownership_snapshot(
+    definition: Mapping, storage_drivers: Mapping, clustered: bool,
+    default_pool: str = "default",
+) -> dict:
+    """Keep only nonsecret identifiers needed to retire an application."""
+    normalized = incus_compose_normalize_application(definition)
+    app = normalized["application"]
+    name, project = app["name"], app["project"]
+    order = incus_app_service_order(normalized["services"])
+    services = [
+        {"name": normalized["services"][key].get("name", key)}
+        for key in order
+    ]
+    networks = [
+        {
+            "name": incus_app_network_name(name, key, value),
+            "project": value.get(
+                "project", project if boolean(app["project_config"].get(
+                    "features.networks", False), strict=False) else "default"
+            ),
+        }
+        for key, value in normalized["networks"].items()
+        if not value.get("external", False)
+    ]
+    volumes = []
+    for key, value in normalized["volumes"].items():
+        pool = value.get("pool", app["defaults"].get("storage_pool", default_pool))
+        target = (
+            value.get("target") or app["placement_member"]
+            if clustered and storage_drivers.get(pool) in {"btrfs", "dir", "lvm", "zfs"}
+            else ""
+        )
+        volumes.append({
+            "name": value.get("name", key), "pool": pool,
+            "target": target, "retain": boolean(value.get("retain", True), strict=False),
+        })
+    return {
+        "name": name, "project": project, "services": services,
+        "networks": networks, "volumes": volumes,
+    }
+
+
+def incus_compose_system_instance_matches(
+    existing: Mapping, description: str, config: Mapping,
+    devices: list, profiles: list, state: str,
+) -> bool:
+    """Ignore the ownership key when deciding whether damex must update a system instance."""
+    expected_config = {
+        str(key): _incus_string(value)
+        for key, value in config.items()
+        if key != "environment_variables" and value is not None
+    }
+    for item in config.get("environment_variables", []):
+        expected_config[f"environment.{item['name']}"] = _incus_string(item["value"])
+    current_config = {
+        key: value for key, value in existing.get("config", {}).items()
+        if not key.startswith(("volatile.", "image."))
+        and key != "user.cloin.incus_compose.owner"
+    }
+    return (
+        existing.get("description", "") == description
+        and current_config == expected_config
+        and existing.get("devices", {}) == incus_app_devices_config(devices)
+        and existing.get("profiles", []) == profiles
+        and existing.get("status") == ("Running" if state == "started" else "Stopped")
+    )
+
+
+def incus_compose_prune_plan(desired: list, inventory: list) -> list:
+    """Reject ambiguous ownership before returning missing active apps."""
+    if not desired:
+        raise AnsibleFilterError("prune requires a nonempty desired catalog")
+    normalized = incus_compose_normalize_catalog(desired)
+    incus_app_validate_catalog(normalized)
+    desired_names = {item["application"]["name"] for item in normalized}
+    desired_projects = [item["application"]["project"] for item in normalized]
+    if len(desired_projects) != len(set(desired_projects)):
+        raise AnsibleFilterError("prune requires one application per project")
+    if any(item["application"]["state"] != "present" for item in normalized):
+        raise AnsibleFilterError("prune requires present-only desired definitions")
+    if any(item.get("status") == "pending" and item["name"] not in desired_names
+           for item in inventory):
+        raise AnsibleFilterError(
+            "prune found an incomplete application absent from the catalog; "
+            "reconcile or inspect it before pruning"
+        )
+    active = [item for item in inventory if item.get("status") == "active"]
+    projects = {}
+    for item in active:
+        previous = projects.setdefault(item["project"], item["name"])
+        if previous != item["name"]:
+            raise AnsibleFilterError("prune inventory contains a shared project")
+    missing = [item for item in active if item["name"] not in desired_names]
+    missing_projects = {item["project"] for item in missing}
+    if missing_projects.intersection(desired_projects):
+        raise AnsibleFilterError("a desired application reuses a retired project")
+    retired_networks = {
+        (network["project"], network["name"])
+        for item in missing for network in item["networks"]
+    }
+    all_networks = {}
+    for item in active:
+        for network in item["networks"]:
+            key = (network["project"], network["name"])
+            previous = all_networks.setdefault(key, item["name"])
+            if previous != item["name"]:
+                raise AnsibleFilterError("prune inventory contains shared network ownership")
+    for item in normalized:
+        app = item["application"]
+        for logical_name, network in item["networks"].items():
+            network_project = network.get(
+                "project", app["project"] if boolean(app["project_config"].get(
+                    "features.networks", False), strict=False) else "default"
+            )
+            physical_name = incus_app_network_name(
+                app["name"], logical_name, network
+            )
+            if (network_project, physical_name) in retired_networks:
+                raise AnsibleFilterError("a desired application uses a retiring network")
+    return missing
+
+
 class FilterModule:
     """Expose the collection's stable filter surface to Ansible."""
 
@@ -1162,6 +1300,9 @@ class FilterModule:
             "is_private_ipv4_prefix": incus_app_is_private_ipv4_prefix,
             "service_order": incus_compose_service_order,
             "network_name": incus_app_network_name,
+            "ownership_snapshot": incus_compose_ownership_snapshot,
+            "system_instance_matches": incus_compose_system_instance_matches,
+            "prune_plan": incus_compose_prune_plan,
             "network_attachment": incus_app_network_attachment,
             "validate_catalog": incus_compose_validate_catalog,
             "normalize_application": incus_compose_normalize_application,

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Stop running services gracefully before explicit or inventory-backed removal.
+- Track nonsecret application ownership and safely prune applications removed
+  from a complete catalog, preserving custom volumes by default.
+- Add targeted retirement, ownership verification, and retirement results.
+
 ## 0.1.1
 
 - Prevent rendered application secrets from appearing in Ansible task output

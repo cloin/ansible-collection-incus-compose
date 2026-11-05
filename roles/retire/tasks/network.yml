@@ -1,0 +1,37 @@
+---
+- name: Inspect network {{ _incus_retire_network.name }}
+  damex.incus.incus_network_info:
+    name: "{{ _incus_retire_network.name }}"
+    project: "{{ _incus_retire_network.project }}"
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  register: _incus_retire_network_info
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Verify network {{ _incus_retire_network.name }} ownership
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_retire_network_info.networks[0].config.get(
+          'user.cloin.incus_compose.owner', '') ==
+        incus_compose_retire_record.token
+    fail_msg: "Network ownership changed; refusing retirement."
+  when:
+    - incus_compose_retire_verify | bool
+    - _incus_retire_network_info.networks | length > 0
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Delete network {{ _incus_retire_network.name }}
+  damex.incus.incus_network:
+    name: "{{ _incus_retire_network.name }}"
+    project: "{{ _incus_retire_network.project }}"
+    state: absent
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  when: _incus_retire_network_info.networks | length > 0

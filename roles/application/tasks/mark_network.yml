@@ -1,0 +1,26 @@
+---
+- name: Read ownership marker for network {{ _incus_owner_network.name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - network
+      - get
+      - "{{ incus_remote }}:{{ _incus_owner_network.name }}"
+      - user.cloin.incus_compose.owner
+      - --project
+      - "{{ _incus_owner_network.project }}"
+  register: _incus_owner_marker
+  changed_when: false
+
+- name: Mark network {{ _incus_owner_network.name }} as collection-owned
+  ansible.builtin.command:
+    argv:
+      - incus
+      - network
+      - set
+      - "{{ incus_remote }}:{{ _incus_owner_network.name }}"
+      - "user.cloin.incus_compose.owner={{ _incus_compose_ownership.record.token }}"
+      - --project
+      - "{{ _incus_owner_network.project }}"
+  changed_when: true
+  when: _incus_owner_marker.stdout != _incus_compose_ownership.record.token

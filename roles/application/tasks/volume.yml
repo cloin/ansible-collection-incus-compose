@@ -35,7 +35,8 @@
       incus_compose_local_storage_drivers
 
 - name: Ensure volume {{ _incus_volume_item.key }} exists
-  damex.incus.incus_storage_volume:
+  cloin.incus_compose.owned_resource:
+    kind: volume
     name: "{{ _incus_volume_item.value.name | default(_incus_volume_item.key) }}"
     description: >-
       {{ _incus_volume_item.value.description |
@@ -52,10 +53,13 @@
     config: >-
       {{ (_incus_volume_item.value.config | default({})) |
          combine({'size': _incus_volume_item.value.size}
-         if _incus_volume_item.value.size is defined else {}) }}
+         if _incus_volume_item.value.size is defined else {}) |
+         combine({'user.cloin.incus_compose.owner':
+                  _incus_compose_ownership.record.token}) }}
     state: present
     url: "{{ incus_api_url }}"
     client_cert_path: "{{ incus_client_cert_path }}"
     client_key_path: "{{ incus_client_key_path }}"
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"

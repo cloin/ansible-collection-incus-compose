@@ -1,0 +1,78 @@
+---
+- name: Inspect service {{ _incus_retire_service.name }}
+  damex.incus.incus_instance_info:
+    name: "{{ _incus_retire_service.name }}"
+    project: "{{ incus_compose_retire_record.project }}"
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  register: _incus_retire_service_info
+  no_log: true
+
+- name: Verify service {{ _incus_retire_service.name }} ownership
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_retire_service_info.instances[0].config.get(
+          'user.cloin.incus_compose.owner', '') ==
+        incus_compose_retire_record.token
+    fail_msg: "Service ownership changed; refusing retirement."
+  when:
+    - incus_compose_retire_verify | bool
+    - _incus_retire_service_info.instances | length > 0
+  no_log: true
+
+- name: Stop running service {{ _incus_retire_service.name }}
+  ansible.builtin.command:
+    argv:
+      - incus
+      - stop
+      - "{{ incus_compose_connection.remote }}:{{ _incus_retire_service.name }}"
+      - --project
+      - "{{ incus_compose_retire_record.project }}"
+      - --timeout
+      - "{{ incus_compose_stop_timeout | string }}"
+  changed_when: true
+  when:
+    - _incus_retire_service_info.instances | length > 0
+    - _incus_retire_service_info.instances[0].status == 'Running'
+
+- name: Confirm service {{ _incus_retire_service.name }} stopped
+  damex.incus.incus_instance_info:
+    name: "{{ _incus_retire_service.name }}"
+    project: "{{ incus_compose_retire_record.project }}"
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  register: _incus_retire_stopped_service
+  when:
+    - _incus_retire_service_info.instances | length > 0
+    - _incus_retire_service_info.instances[0].status == 'Running'
+  no_log: true
+
+- name: Refuse deletion if service {{ _incus_retire_service.name }} is still running
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_retire_stopped_service.instances | length == 0 or
+        _incus_retire_stopped_service.instances[0].status != 'Running'
+  when:
+    - _incus_retire_service_info.instances | length > 0
+    - _incus_retire_service_info.instances[0].status == 'Running'
+  no_log: true
+
+- name: Delete stopped service {{ _incus_retire_service.name }}
+  damex.incus.incus_instance:
+    name: "{{ _incus_retire_service.name }}"
+    project: "{{ incus_compose_retire_record.project }}"
+    state: absent
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  when: _incus_retire_service_info.instances | length > 0

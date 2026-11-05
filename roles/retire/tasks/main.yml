@@ -1,0 +1,178 @@
+---
+- name: Read inventory for named retirement
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_compose_connection.remote }}"
+    action: read
+    name: "{{ incus_compose_retire_name }}"
+  register: _incus_retire_named_inventory
+  when: incus_compose_retire_name | length > 0
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Select named ownership record
+  ansible.builtin.set_fact:
+    incus_compose_retire_record: "{{ _incus_retire_named_inventory.record }}"
+  when: incus_compose_retire_name | length > 0
+
+- name: Validate retirement request
+  ansible.builtin.assert:
+    that:
+      - incus_compose_connection.remote | default('') | length > 0
+      - incus_compose_connection.url | default('') | length > 0
+      - incus_compose_retire_record.name | default('') | length > 0
+      - incus_compose_retire_record.project | default('') | length > 0
+      - incus_compose_retire_record.project != 'default'
+      - incus_compose_retire_record.services is defined
+      - incus_compose_retire_record.networks is defined
+      - incus_compose_retire_record.volumes is defined
+      - incus_compose_stop_timeout | int > 0
+      - incus_compose_retire_name | length == 0 or
+        incus_compose_retire_record.status | default('') in ['active', 'retired']
+      - not (incus_compose_retire_verify | bool) or
+        incus_compose_retire_record.token | default('') | length > 0
+
+- name: Report already retired application
+  ansible.builtin.set_fact:
+    incus_compose_retirement_result:
+      application: "{{ incus_compose_retire_record.name }}"
+      retained_volumes: "{{ incus_compose_retire_record.retained_volumes }}"
+      retained_project: "{{ incus_compose_retire_record.retained_project }}"
+  when:
+    - incus_compose_retire_record.status | default('') == 'retired'
+    - not (incus_compose_destroy_data | bool)
+
+- name: Skip completed retirement
+  ansible.builtin.meta: end_role
+  when:
+    - incus_compose_retire_record.status | default('') == 'retired'
+    - not (incus_compose_destroy_data | bool)
+
+- name: Require normal mode for retirement
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+    fail_msg: >-
+      Retirement requires normal mode; check mode cannot confirm a graceful
+      stop or update ownership inventory.
+
+- name: Verify all owned resources before teardown
+  ansible.builtin.include_tasks: preflight.yml
+  when: incus_compose_retire_verify | bool
+
+- name: Remove services in reverse dependency order
+  ansible.builtin.include_tasks: service.yml
+  loop: "{{ incus_compose_retire_record.services | reverse | list }}"
+  loop_control:
+    loop_var: _incus_retire_service
+    label: "{{ _incus_retire_service.name }}"
+
+- name: Calculate retained volumes
+  ansible.builtin.set_fact:
+    _incus_retire_retained_volumes: >-
+      {{ incus_compose_retire_record.volumes |
+         selectattr('retain', 'equalto', true) |
+         map(attribute='name') | list
+         if not (incus_compose_destroy_data | bool) and
+            not (incus_compose_retire_automatic | bool) and
+            incus_compose_retire_record.status | default('') != 'retired'
+         else (incus_compose_retire_record.volumes |
+               map(attribute='name') | list
+               if not (incus_compose_destroy_data | bool) else []) }}
+
+- name: Initialize confirmed retained volumes
+  ansible.builtin.set_fact:
+    _incus_retire_candidate_volumes: "{{ _incus_retire_retained_volumes }}"
+    _incus_retire_retained_volumes: []
+
+- name: Confirm retained volumes still exist
+  ansible.builtin.include_tasks: confirm_retained_volume.yml
+  loop: "{{ incus_compose_retire_record.volumes }}"
+  loop_control:
+    loop_var: _incus_retire_volume
+    label: "{{ _incus_retire_volume.name }}"
+  when: _incus_retire_volume.name in _incus_retire_candidate_volumes
+
+- name: Process application volumes
+  ansible.builtin.include_tasks: volume.yml
+  loop: "{{ incus_compose_retire_record.volumes }}"
+  loop_control:
+    loop_var: _incus_retire_volume
+    label: "{{ _incus_retire_volume.name }}"
+  when: _incus_retire_volume.name not in _incus_retire_retained_volumes
+
+- name: Remove owned managed networks
+  ansible.builtin.include_tasks: network.yml
+  loop: "{{ incus_compose_retire_record.networks }}"
+  loop_control:
+    loop_var: _incus_retire_network
+    label: "{{ _incus_retire_network.project }}/{{ _incus_retire_network.name }}"
+
+- name: Inspect application project before retirement
+  damex.incus.incus_project_info:
+    name: "{{ incus_compose_retire_record.project }}"
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  register: _incus_retire_project_info
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Verify application project ownership
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_retire_project_info.projects[0].config.get(
+          'user.cloin.incus_compose.owner', '') ==
+        incus_compose_retire_record.token
+    fail_msg: "Application project ownership changed; refusing retirement."
+  when:
+    - incus_compose_retire_verify | bool
+    - _incus_retire_project_info.projects | length > 0
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Remove application project without retained volumes
+  damex.incus.incus_project:
+    name: "{{ incus_compose_retire_record.project }}"
+    state: absent
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  when:
+    - _incus_retire_retained_volumes | length == 0
+    - _incus_retire_project_info.projects | length > 0
+
+- name: Mark retained application retired
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_compose_connection.remote }}"
+    action: retire
+    name: "{{ incus_compose_retire_record.name }}"
+    token: "{{ incus_compose_retire_record.token }}"
+    retained_volumes: "{{ _incus_retire_retained_volumes }}"
+    retained_project: true
+  when:
+    - incus_compose_retire_record.token | default('') | length > 0
+    - _incus_retire_retained_volumes | length > 0
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Remove completed application ownership record
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_compose_connection.remote }}"
+    action: remove
+    name: "{{ incus_compose_retire_record.name }}"
+    token: "{{ incus_compose_retire_record.token }}"
+  when:
+    - incus_compose_retire_record.token | default('') | length > 0
+    - _incus_retire_retained_volumes | length == 0
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Publish retirement result
+  ansible.builtin.set_fact:
+    incus_compose_retirement_result:
+      application: "{{ incus_compose_retire_record.name }}"
+      retained_volumes: "{{ _incus_retire_retained_volumes }}"
+      retained_project: "{{ _incus_retire_retained_volumes | length > 0 }}"

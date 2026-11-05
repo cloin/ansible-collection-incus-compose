@@ -27,13 +27,15 @@
     client_key_path: "{{ incus_client_key_path }}"
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"
   loop: "{{ _incus_compose_cluster_members }}"
   loop_control:
     label: "{{ item.server_name }}"
   when: _incus_compose_clustered
 
 - name: Finalize network {{ _incus_network_name }}
-  damex.incus.incus_network:
+  cloin.incus_compose.owned_resource:
+    kind: network
     name: "{{ _incus_network_name }}"
     description: >-
       {{ _incus_network_definition.description |
@@ -44,10 +46,14 @@
          default(_incus_app_project
          if (((_incus_app.project_config | default({}))['features.networks'] |
          default(false)) | bool) else 'default') }}
-    config: "{{ _incus_network_definition.config | default({}) }}"
+    config: >-
+      {{ _incus_network_definition.config | default({}) |
+         combine({'user.cloin.incus_compose.owner':
+                  _incus_compose_ownership.record.token}) }}
     state: present
     url: "{{ incus_api_url }}"
     client_cert_path: "{{ incus_client_cert_path }}"
     client_key_path: "{{ incus_client_key_path }}"
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"

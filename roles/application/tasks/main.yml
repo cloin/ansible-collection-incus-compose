@@ -2,10 +2,86 @@
 - name: Validate and normalize the application definition
   ansible.builtin.import_tasks: validate.yml
 
+- name: Require normal mode for ownership reconciliation
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+    fail_msg: >-
+      Application reconciliation requires normal mode because ownership
+      inventory and live Incus state must be updated together.
+
+- name: Build nonsecret application ownership snapshot
+  ansible.builtin.set_fact:
+    _incus_compose_ownership_snapshot: >-
+      {{ incus_compose_application |
+         cloin.incus_compose.ownership_snapshot(
+           _incus_compose_storage_drivers,
+           _incus_compose_clustered,
+           incus_default_storage_pool) }}
+
+- name: Read application ownership before enrollment
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_remote }}"
+    action: read
+    name: "{{ _incus_app_name }}"
+  register: _incus_compose_ownership
+  when: _incus_app_state == 'present'
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Refuse conflicting live ownership before reconciliation
+  ansible.builtin.include_tasks: preflight_ownership.yml
+  when: _incus_app_state == 'present'
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Reserve application ownership token
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_remote }}"
+    action: ensure
+    name: "{{ _incus_app_name }}"
+    snapshot: "{{ _incus_compose_ownership_snapshot }}"
+  register: _incus_compose_ownership
+  when: _incus_app_state == 'present'
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
 - name: Reconcile application resources
   ansible.builtin.include_tasks: present.yml
   when: _incus_app_state == 'present'
 
-- name: Remove application resources
-  ansible.builtin.include_tasks: absent.yml
+- name: Publish successful application ownership
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_remote }}"
+    action: publish
+    name: "{{ _incus_app_name }}"
+    snapshot: "{{ _incus_compose_ownership_snapshot }}"
+    token: "{{ _incus_compose_ownership.record.token }}"
+  when: _incus_app_state == 'present'
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Read ownership for explicit removal
+  cloin.incus_compose.ownership:
+    path: "{{ incus_compose_ownership_path }}"
+    remote: "{{ incus_remote }}"
+    action: read
+    name: "{{ _incus_app_name }}"
+  register: _incus_compose_existing_ownership
   when: _incus_app_state == 'absent'
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Remove application resources
+  ansible.builtin.include_role:
+    name: cloin.incus_compose.retire
+  vars:
+    incus_compose_retire_record: >-
+      {{ _incus_compose_existing_ownership.record
+         if _incus_compose_existing_ownership.record.status |
+            default('') in ['active', 'retired']
+         else _incus_compose_ownership_snapshot }}
+    incus_compose_retire_verify: >-
+      {{ _incus_compose_existing_ownership.record.status |
+         default('') in ['active', 'retired'] }}
+    incus_compose_retire_automatic: false
+  when: _incus_app_state == 'absent'
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
