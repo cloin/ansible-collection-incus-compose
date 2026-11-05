@@ -1,0 +1,43 @@
+---
+- name: Read project ownership marker
+  ansible.builtin.command:
+    argv:
+      - incus
+      - project
+      - get
+      - "{{ incus_remote }}:{{ _incus_compose_ownership_snapshot.project }}"
+      - user.cloin.incus_compose.owner
+  register: _incus_owner_project_marker
+  changed_when: false
+
+- name: Mark project as collection-owned
+  ansible.builtin.command:
+    argv:
+      - incus
+      - project
+      - set
+      - "{{ incus_remote }}:{{ _incus_compose_ownership_snapshot.project }}"
+      - "user.cloin.incus_compose.owner={{ _incus_compose_ownership.record.token }}"
+  changed_when: true
+  when: _incus_owner_project_marker.stdout != _incus_compose_ownership.record.token
+
+- name: Mark application services
+  ansible.builtin.include_tasks: mark_instance.yml
+  loop: "{{ _incus_compose_ownership_snapshot.services }}"
+  loop_control:
+    loop_var: _incus_owner_instance
+    label: "{{ _incus_owner_instance.name }}"
+
+- name: Mark managed application networks
+  ansible.builtin.include_tasks: mark_network.yml
+  loop: "{{ _incus_compose_ownership_snapshot.networks }}"
+  loop_control:
+    loop_var: _incus_owner_network
+    label: "{{ _incus_owner_network.name }}"
+
+- name: Mark application volumes
+  ansible.builtin.include_tasks: mark_volume.yml
+  loop: "{{ _incus_compose_ownership_snapshot.volumes }}"
+  loop_control:
+    loop_var: _incus_owner_volume
+    label: "{{ _incus_owner_volume.name }}"

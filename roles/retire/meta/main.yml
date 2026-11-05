@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: retire
+  author: cloin
+  description: Retire one inventory-backed Incus Compose application
+  license: MIT
+  min_ansible_version: "2.20"
+dependencies: []

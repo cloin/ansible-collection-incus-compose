@@ -1,0 +1,22 @@
+---
+- name: Retire {{ _incus_compose_prune_record.name }}
+  ansible.builtin.include_role:
+    name: cloin.incus_compose.retire
+  vars:
+    incus_compose_retire_record: "{{ _incus_compose_prune_record }}"
+    incus_compose_retire_verify: true
+    incus_compose_retire_automatic: true
+
+- name: Record retirement of {{ _incus_compose_prune_record.name }}
+  ansible.builtin.set_fact:
+    _incus_compose_retired: >-
+      {{ _incus_compose_retired + [incus_compose_retirement_result.application] }}
+    _incus_compose_retained_volumes: >-
+      {{ _incus_compose_retained_volumes +
+         (incus_compose_retirement_result.retained_volumes |
+          map('regex_replace', '^',
+              incus_compose_retirement_result.application ~ '/') | list) }}
+    _incus_compose_retained_projects: >-
+      {{ _incus_compose_retained_projects +
+         ([_incus_compose_prune_record.project]
+          if incus_compose_retirement_result.retained_project else []) }}

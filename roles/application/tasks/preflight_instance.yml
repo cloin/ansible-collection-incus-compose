@@ -1,0 +1,29 @@
+---
+- name: Inspect existing service {{ _incus_owner_instance.name }}
+  damex.incus.incus_instance_info:
+    name: "{{ _incus_owner_instance.name }}"
+    project: "{{ _incus_compose_ownership_snapshot.project }}"
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_owner_existing_resource
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+
+- name: Refuse another application's service {{ _incus_owner_instance.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_incus_compose_ownership.record.token | default('') | length > 0 and
+         _incus_owner_existing_resource.instances[0].config.get(
+           'user.cloin.incus_compose.owner', '') ==
+         _incus_compose_ownership.record.token) or
+        (incus_compose_enroll_existing | bool and
+         _incus_owner_existing_resource.instances[0].config.get(
+           'user.cloin.incus_compose.owner', '') == '')
+    fail_msg: >-
+      Existing service is not owned by this application. Set
+      incus_compose_enroll_existing: true for a deliberate one-time enrollment.
+  when: _incus_owner_existing_resource.instances | length > 0
+  no_log: "{{ incus_application_hide_sensitive_values }}"

@@ -1,0 +1,49 @@
+---
+- name: Inspect existing application project ownership
+  damex.incus.incus_project_info:
+    name: "{{ _incus_compose_ownership_snapshot.project }}"
+    url: "{{ incus_api_url }}"
+    client_cert_path: "{{ incus_client_cert_path }}"
+    client_key_path: "{{ incus_client_key_path }}"
+    server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_validate_certs }}"
+  register: _incus_owner_existing_project
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+
+- name: Refuse another application's project
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_incus_compose_ownership.record.token | default('') | length > 0 and
+         _incus_owner_existing_project.projects[0].config.get(
+           'user.cloin.incus_compose.owner', '') ==
+         _incus_compose_ownership.record.token) or
+        (incus_compose_enroll_existing | bool and
+         _incus_owner_existing_project.projects[0].config.get(
+           'user.cloin.incus_compose.owner', '') == '')
+    fail_msg: >-
+      Existing project is not owned by this application. Set
+      incus_compose_enroll_existing: true for a deliberate one-time enrollment.
+  when: _incus_owner_existing_project.projects | length > 0
+  no_log: "{{ incus_application_hide_sensitive_values }}"
+
+- name: Verify existing managed network ownership
+  ansible.builtin.include_tasks: preflight_network.yml
+  loop: "{{ _incus_compose_ownership_snapshot.networks }}"
+  loop_control:
+    loop_var: _incus_owner_network
+    label: "{{ _incus_owner_network.project }}/{{ _incus_owner_network.name }}"
+
+- name: Verify existing service ownership
+  ansible.builtin.include_tasks: preflight_instance.yml
+  loop: "{{ _incus_compose_ownership_snapshot.services }}"
+  loop_control:
+    loop_var: _incus_owner_instance
+    label: "{{ _incus_owner_instance.name }}"
+
+- name: Verify existing volume ownership
+  ansible.builtin.include_tasks: preflight_volume.yml
+  loop: "{{ _incus_compose_ownership_snapshot.volumes }}"
+  loop_control:
+    loop_var: _incus_owner_volume
+    label: "{{ _incus_owner_volume.name }}"

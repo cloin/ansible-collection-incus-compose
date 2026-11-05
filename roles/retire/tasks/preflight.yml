@@ -1,0 +1,43 @@
+---
+- name: Inspect project ownership before teardown
+  damex.incus.incus_project_info:
+    name: "{{ incus_compose_retire_record.project }}"
+    url: "{{ incus_compose_connection.url }}"
+    client_cert_path: "{{ incus_compose_connection.client_cert_path }}"
+    client_key_path: "{{ incus_compose_connection.client_key_path }}"
+    server_cert_path: "{{ incus_compose_connection.server_cert_path | default(omit, true) }}"
+    validate_certs: "{{ incus_compose_connection.validate_certs | default(true) }}"
+  register: _incus_retire_preflight_project
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Reject conflicting project ownership before teardown
+  ansible.builtin.assert:
+    that:
+      - >-
+        _incus_retire_preflight_project.projects[0].config.get(
+          'user.cloin.incus_compose.owner', '') ==
+        incus_compose_retire_record.token
+    fail_msg: "Application project ownership changed; refusing retirement."
+  when: _incus_retire_preflight_project.projects | length > 0
+  no_log: "{{ incus_compose_hide_sensitive_values }}"
+
+- name: Verify service ownership before teardown
+  ansible.builtin.include_tasks: preflight_service.yml
+  loop: "{{ incus_compose_retire_record.services }}"
+  loop_control:
+    loop_var: _incus_retire_service
+    label: "{{ _incus_retire_service.name }}"
+
+- name: Verify network ownership before teardown
+  ansible.builtin.include_tasks: preflight_network.yml
+  loop: "{{ incus_compose_retire_record.networks }}"
+  loop_control:
+    loop_var: _incus_retire_network
+    label: "{{ _incus_retire_network.project }}/{{ _incus_retire_network.name }}"
+
+- name: Verify volume ownership before teardown
+  ansible.builtin.include_tasks: preflight_volume.yml
+  loop: "{{ incus_compose_retire_record.volumes }}"
+  loop_control:
+    loop_var: _incus_retire_volume
+    label: "{{ _incus_retire_volume.name }}"

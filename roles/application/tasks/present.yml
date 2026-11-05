@@ -1,19 +1,23 @@
 ---
 - name: Ensure application project exists
-  damex.incus.incus_project:
+  cloin.incus_compose.owned_resource:
+    kind: project
     name: "{{ _incus_app_project }}"
     description: >-
       {{ _incus_app.description |
          default('Managed by cloin.incus_compose: ' ~ _incus_app_name) }}
     config: >-
       {{ incus_application_default_project_config |
-         combine(_incus_app.project_config | default({}), recursive=True) }}
+         combine(_incus_app.project_config | default({}), recursive=True) |
+         combine({'user.cloin.incus_compose.owner':
+                  _incus_compose_ownership.record.token}) }}
     state: present
     url: "{{ incus_api_url }}"
     client_cert_path: "{{ incus_client_cert_path }}"
     client_key_path: "{{ incus_client_key_path }}"
     server_cert_path: "{{ incus_server_cert_path | default(omit, true) }}"
     validate_certs: "{{ incus_validate_certs }}"
+  no_log: "{{ incus_application_hide_sensitive_values }}"
 
 - name: Ensure managed application networks exist
   ansible.builtin.include_tasks: network.yml
@@ -36,3 +40,6 @@
   loop_control:
     loop_var: _incus_service_name
     label: "{{ _incus_service_name }}"
+
+- name: Mark reconciled resources as collection-owned
+  ansible.builtin.include_tasks: mark_owned.yml
